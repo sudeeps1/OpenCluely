@@ -42,8 +42,10 @@
   // ── State ─────────────────────────────────────────────────────────
   const state = {
     step: 0,
-    geminiKey: '',
+    llmProvider: 'gemini', // 'gemini' | 'anthropic'
+    geminiKey: '', // key typed on the API-key screen (for the selected provider)
     geminiConfigured: false, // a key already exists in .env from a prior run
+    anthropicConfigured: false,
     speechProvider: null, // 'whisper' | 'azure' | 'skip'
     azureKey: '',
     azureRegion: '',
@@ -136,7 +138,7 @@
         return true;
       case 'apikey':
         // A key already in .env is enough — don't force a re-entry.
-        return !!state.geminiKey.trim() || state.geminiConfigured;
+        return !!state.geminiKey.trim() || llmConfigured();
       case 'speech':
         if (state.speechProvider === 'azure') {
           return !!state.azureKey.trim() && !!state.azureRegion.trim();
@@ -156,6 +158,12 @@
 
   // ── Wire up: API key ──────────────────────────────────────────────
   const geminiInput = $('#geminiKey');
+  const llmProviderSelect = $('#llmProvider');
+
+  // True when the selected provider already has a key in .env
+  function llmConfigured() {
+    return state.llmProvider === 'anthropic' ? state.anthropicConfigured : state.geminiConfigured;
+  }
   const toggleVis = $('#toggleVis');
   const keyStatus = $('#keyStatus');
 
@@ -185,6 +193,28 @@
     } else {
       setKeyStatus('idle', 'Key entered');
     }
+  });
+
+  function applyLlmProvider() {
+    const isAnthropic = state.llmProvider === 'anthropic';
+    llmProviderSelect.value = state.llmProvider;
+    $('#llmKeyLabel').textContent = isAnthropic ? 'Anthropic API Key' : 'Gemini API Key';
+    $('#geminiKeyHint').style.display = isAnthropic ? 'none' : '';
+    $('#anthropicKeyHint').style.display = isAnthropic ? '' : 'none';
+    if (llmConfigured()) {
+      setKeyStatus('success', 'Already configured — click Continue');
+      geminiInput.placeholder = '•••••••••••••••• (already set)';
+    } else {
+      keyStatus.style.display = 'none';
+      geminiInput.placeholder = isAnthropic ? 'sk-ant-…' : 'AIza…';
+    }
+  }
+
+  llmProviderSelect.addEventListener('change', () => {
+    state.llmProvider = llmProviderSelect.value;
+    state.geminiKey = '';
+    geminiInput.value = '';
+    applyLlmProvider();
   });
 
   toggleVis.addEventListener('click', () => {
@@ -451,9 +481,9 @@
   function populateSummary() {
     const rows = [];
     rows.push({
-      label: '<i class="fas fa-key"></i> Gemini API',
-      value: (state.geminiKey || state.geminiConfigured) ? 'Configured' : 'Missing',
-      cls: (state.geminiKey || state.geminiConfigured) ? 'ok' : 'skip',
+      label: `<i class="fas fa-key"></i> ${state.llmProvider === 'anthropic' ? 'Claude API' : 'Gemini API'}`,
+      value: (state.geminiKey || llmConfigured()) ? 'Configured' : 'Missing',
+      cls: (state.geminiKey || llmConfigured()) ? 'ok' : 'skip',
     });
     if (state.speechProvider === 'whisper') {
       rows.push({
@@ -514,16 +544,20 @@
     const name = currentScreenName();
     if (!canAdvance()) {
       // Lightly nudge the user
-      if (name === 'apikey') setKeyStatus('error', 'Enter a Gemini API key');
+      if (name === 'apikey') setKeyStatus('error', 'Enter an API key');
       return;
     }
 
     // Persist settings on speech selection (Azure path), since we
     // already saved geminiKey on test; do it here too if user skipped
     // testing.
-    if (name === 'apikey' && state.geminiKey && window.electronAPI) {
+    if (name === 'apikey' && window.electronAPI) {
       try {
-        await window.electronAPI.saveSettings({ geminiKey: state.geminiKey });
+        const payload = { llmProvider: state.llmProvider };
+        if (state.geminiKey) {
+          payload[state.llmProvider === 'anthropic' ? 'anthropicKey' : 'geminiKey'] = state.geminiKey;
+        }
+        await window.electronAPI.saveSettings(payload);
       } catch (_) { /* surfaced elsewhere */ }
     }
     if (name === 'speech' && window.electronAPI) {
@@ -659,13 +693,14 @@
   // a partial config don't have to retype.
   if (window.electronAPI && window.electronAPI.getFirstRunStatus) {
     window.electronAPI.getFirstRunStatus().then((s) => {
-      if (s && s.geminiConfigured) {
+      if (s && (s.geminiConfigured || s.anthropicConfigured)) {
         // We can't read the key back (settings returns empty for keys),
         // but we can mark status as success if the env file already has one
         // and let the user advance without retyping it.
-        state.geminiConfigured = true;
-        setKeyStatus('success', 'Already configured — click Continue');
-        geminiInput.placeholder = '•••••••••••••••• (already set)';
+        state.geminiConfigured = !!s.geminiConfigured;
+        state.anthropicConfigured = !!s.anthropicConfigured;
+        if (!s.geminiConfigured) state.llmProvider = 'anthropic';
+        applyLlmProvider();
       }
     }).catch(() => {});
   }

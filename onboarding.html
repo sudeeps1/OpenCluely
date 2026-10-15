@@ -279,7 +279,7 @@
             color: var(--text-faint);
             font-size: 13px;
         }
-        input.input {
+        input.input, select.input {
             width: 100%;
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -290,13 +290,13 @@
             font-family: inherit;
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
-        input.input:focus {
+        input.input:focus, select.input:focus {
             outline: none;
             border-color: var(--accent);
             box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
         }
         @media (prefers-color-scheme: light) {
-            input.input:focus {
+            input.input:focus, select.input:focus {
                 box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
             }
         }
@@ -740,13 +740,24 @@
 
             <!-- SCREEN 2: API Key -->
             <section class="screen" data-screen="apikey">
-                <h1>Connect Google Gemini</h1>
+                <h1>Connect an AI Model</h1>
                 <p class="subtitle">
-                    OpenCluely uses Google's Gemini to generate answers. You'll need a free API key.
+                    OpenCluely uses Google Gemini or Anthropic Claude to generate answers. You'll need an API key for one of them.
                 </p>
 
                 <div class="field">
-                    <label for="geminiKey">Gemini API Key</label>
+                    <label for="llmProvider">Provider</label>
+                    <div class="input-wrap">
+                        <i class="fas fa-robot icon"></i>
+                        <select id="llmProvider" class="input">
+                            <option value="gemini">Google Gemini</option>
+                            <option value="anthropic">Anthropic Claude</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="geminiKey" id="llmKeyLabel">Gemini API Key</label>
                     <div class="input-wrap">
                         <i class="fas fa-key icon"></i>
                         <input
@@ -761,12 +772,19 @@
                             <i class="fas fa-eye"></i>
                         </button>
                     </div>
-                    <div class="hint">
+                    <div class="hint" id="geminiKeyHint">
                         Don't have one? Get a free key at
                         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
                             aistudio.google.com/apikey
                         </a>.
                         It's stored locally in <code>.env</code> — never sent anywhere except Google.
+                    </div>
+                    <div class="hint" id="anthropicKeyHint" style="display:none;">
+                        Don't have one? Create a key at
+                        <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noreferrer">
+                            platform.claude.com/settings/keys
+                        </a>.
+                        It's stored locally in <code>.env</code> — never sent anywhere except Anthropic.
                     </div>
                     <div id="keyStatus" class="status-pill idle" style="display:none;">
                         <i class="fas fa-circle-info"></i>

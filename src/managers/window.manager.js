@@ -1,4 +1,4 @@
-const { BrowserWindow, screen, desktopCapturer, shell } = require('electron');
+const { app, BrowserWindow, screen, desktopCapturer, shell } = require('electron');
 const path = require('path');
 const logger = require('../core/logger').createServiceLogger('WINDOW');
 const config = require('../core/config');
@@ -823,11 +823,36 @@ class WindowManager {
     });
   }
 
-  showOnCurrentDesktop(win) {
+  /**
+   * macOS only draws a window over another app's full-screen Space when the
+   * owning app has no Dock icon. Electron hides the Dock as a side effect of
+   * setVisibleOnAllWorkspaces(..., { visibleOnFullScreen: true }), but that
+   * does not reliably stick during startup, so assert it explicitly.
+   */
+  ensureHiddenFromDock() {
+    if (process.platform !== 'darwin' || !config.get('stealth.hideFromDock')) return;
+    try {
+      if (app.dock && app.dock.isVisible()) {
+        app.dock.hide();
+        logger.debug('Dock icon hidden so overlays can appear over full-screen apps');
+      }
+    } catch (error) {
+      logger.debug('Could not hide Dock icon', { error: error.message });
+    }
+  }
+
+  showOnCurrentDesktop(win, options = {}) {
     if (!win || win.isDestroyed()) return;
 
     const llmWin = this.windows.get('llmResponse');
     const isLLM = llmWin && !llmWin.isDestroyed() && win.id === llmWin.id;
+    // The bar, the answer window and the chat/transcript window are overlays
+    // that sit on top of whatever the user is working in.
+    const isPassiveOverlay = ['main', 'llmResponse', 'chat'].some((type) => {
+      const overlay = this.windows.get(type);
+      return overlay && !overlay.isDestroyed() && win.id === overlay.id;
+    });
+    const activate = options.activate !== undefined ? options.activate : !isPassiveOverlay;
 
     if (process.platform === 'darwin') {
       // macOS: prevent space switching and keep visibility stable
@@ -849,17 +874,26 @@ class WindowManager {
 
       setTimeout(() => {
         if (win.isDestroyed()) return;
-        win.show();
-        win.focus();
+        // Show overlays without activating this app, so the app the user is
+        // working in keeps keyboard focus (many full-screen apps and sites
+        // drop out of full screen when they lose it). Settings and onboarding
+        // still take focus when opened.
+        if (activate) {
+          win.show();
+          win.focus();
+        } else {
+          win.showInactive();
+        }
         setMacOSAlwaysOnTop();
         setTimeout(() => { if (!win.isDestroyed()) setMacOSAlwaysOnTop(); }, 100);
-        // Keep LLM window visible across workspaces; others revert
+        // Stay visible on every Space, including other apps' full-screen
+        // Spaces. Reverting to setVisibleOnAllWorkspaces(false) here pins the
+        // window to the Space it was shown on, so it vanishes as soon as
+        // another app goes full screen (a full-screen app is its own Space).
         setTimeout(() => {
           if (win.isDestroyed()) return;
-          if (!isLLM) {
-            win.setVisibleOnAllWorkspaces(false);
-          }
           setMacOSAlwaysOnTop();
+          this.ensureHiddenFromDock();
         }, 300);
       }, 50);
     } else {
@@ -1060,13 +1094,15 @@ class WindowManager {
 
     this.windows.forEach((window, type) => {
       if (type !== 'llmResponse') { // Don't show LLM response unless it has content
-        this.showOnCurrentDesktop(window);
+        this.showOnCurrentDesktop(window, { activate: false });
       }
     });
     
     this.isVisible = true;
+    // On macOS, un-hiding the overlays must not pull keyboard focus away from
+    // the app the user is working in.
     const activeWindow = this.windows.get(this.activeWindow);
-    if (activeWindow) {
+    if (activeWindow && process.platform !== 'darwin') {
       activeWindow.focus();
     }
     
@@ -1077,8 +1113,10 @@ class WindowManager {
   }
 
   hideAllWindows() {
-    this.windows.forEach((window, type) => {
-      if (type !== 'llmResponse') {
+    // Hides everything, including the AI answer window. showAllWindows()
+    // does not bring the answer back; it reappears with the next response.
+    this.windows.forEach((window) => {
+      if (window && !window.isDestroyed()) {
         window.hide();
       }
     });
@@ -1092,7 +1130,12 @@ class WindowManager {
       return this.isVisible;
     }
 
-    if (this.isVisible) {
+    // An answer can be on screen while the bar is hidden; the toggle should
+    // dismiss it rather than bring everything else back.
+    const llmWindow = this.windows.get('llmResponse');
+    const answerVisible = !!llmWindow && !llmWindow.isDestroyed() && llmWindow.isVisible();
+
+    if (this.isVisible || answerVisible) {
       this.hideAllWindows();
     } else {
       this.showAllWindows();
@@ -1301,6 +1344,17 @@ class WindowManager {
       windowVisible: llmWindow.isVisible(),
       boundWindows: this.bindWindows
     });
+  }
+
+  /**
+   * Scroll the answer window from a global shortcut, so it can be read
+   * without clicking it (a click would take keyboard focus from the app the
+   * user is working in). direction: -1 = up, 1 = down.
+   */
+  scrollLLMResponse(direction) {
+    const llmWindow = this.windows.get('llmResponse');
+    if (!llmWindow || llmWindow.isDestroyed() || !llmWindow.isVisible()) return;
+    llmWindow.webContents.send('scroll-llm-response', { direction });
   }
 
   showLLMLoading() {

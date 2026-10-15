@@ -100,11 +100,18 @@ If you would rather build from source, three steps are all it takes.
 
 ## Configuration
 
-The setup script writes sensible defaults. The only required value is a Gemini API key.
+The setup script writes sensible defaults. The only required value is an API key for one AI provider: Google Gemini or Anthropic Claude. You can also pick the provider and enter the key in the onboarding wizard or Settings.
 
 ```bash
-# Required
+# Required: one of these
 GEMINI_API_KEY=your_gemini_api_key_here
+# ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Optional: gemini or anthropic. Needed only when both keys are set (defaults to gemini).
+# LLM_PROVIDER=anthropic
+# Optional Claude overrides
+# ANTHROPIC_MODEL=claude-sonnet-5-5
+# ANTHROPIC_EFFORT=low
 
 # Optional speech provider. Pick one.
 SPEECH_PROVIDER=whisper
@@ -151,6 +158,7 @@ For Azure Speech, create a Speech resource in the [Azure Portal](https://portal.
 | Toggle visibility | `Cmd/Ctrl + Shift + V` | Show or hide all windows |
 | Toggle interaction | `Cmd/Ctrl + Shift + I` or `Alt + A` | Enable or disable click through |
 | Open chat | `Cmd/Ctrl + Shift + C` | Open the interactive chat window |
+| Scroll answer | `Ctrl + Alt + Up / Down` | Scroll the answer window without clicking it |
 | Settings | `Cmd/Ctrl + ,` | Open the settings panel |
 
 ## Project status

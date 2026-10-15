@@ -351,7 +351,9 @@ if (typeof window === 'undefined') {
   global.navigator = global.window.navigator;
   global.AudioContext = global.window.AudioContext;
   global.webkitAudioContext = global.window.webkitAudioContext;
-  global.URL = global.window.URL;
+  // Keep Node's real URL: replacing it with the stub above breaks any HTTP
+  // client in the main process that parses URLs (e.g. the Anthropic SDK).
+  global.URL = global.URL || global.window.URL;
   global.Blob = global.window.Blob;
   global.File = global.window.File;
 

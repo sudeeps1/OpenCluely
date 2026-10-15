@@ -39,6 +39,17 @@ class ConfigManager {
       },
 
       llm: {
+        // Active provider is resolved by getLlmProvider(): LLM_PROVIDER env
+        // ('gemini' | 'anthropic'), else whichever API key is configured.
+        anthropic: {
+          model: 'claude-sonnet-5-5',
+          maxTokens: 16000,
+          // low | medium | high | xhigh | max — lower is faster and cheaper
+          effort: 'low',
+          maxRetries: 2,
+          timeout: 120000,
+          fallbackEnabled: true
+        },
         gemini: {
           model: 'gemini-3.1-flash-lite',
           fallbackModels: ['gemini-2.5-flash-lite', 'gemini-3.5-flash'],
@@ -119,6 +130,18 @@ class ConfigManager {
   getApiKey(service) {
     const envKey = `${service.toUpperCase()}_API_KEY`;
     return process.env[envKey];
+  }
+
+  hasApiKey(service) {
+    const key = (this.getApiKey(service) || '').trim();
+    return !!key && !/^your[-_].*[-_]here$/i.test(key);
+  }
+
+  getLlmProvider() {
+    const explicit = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
+    if (explicit === 'anthropic' || explicit === 'claude') return 'anthropic';
+    if (explicit === 'gemini') return 'gemini';
+    return this.hasApiKey('ANTHROPIC') && !this.hasApiKey('GEMINI') ? 'anthropic' : 'gemini';
   }
 
   isFeatureEnabled(feature) {

@@ -1,12 +1,17 @@
 const { GoogleGenAI } = require('@google/genai');
+const Anthropic = require('@anthropic-ai/sdk');
 const logger = require('../core/logger').createServiceLogger('LLM');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
+
+// Claude models that accept the server-side refusal fallback parameter.
+const ANTHROPIC_SERVER_FALLBACK_MODELS = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5'];
 
 class LLMService {
   constructor() {
     this.client = null;
     this.model = null;
+    this.provider = 'gemini';
     this.isInitialized = false;
     this.requestCount = 0;
     this.errorCount = 0;
@@ -15,12 +20,22 @@ class LLMService {
   }
 
   initializeClient() {
+    this.client = null;
+    this.model = null;
+    this.isInitialized = false;
+    this.provider = config.getLlmProvider();
+
+    if (this.provider === 'anthropic') {
+      this.initializeAnthropicClient();
+      return;
+    }
+
     const apiKey = config.getApiKey('GEMINI');
     
-    if (!apiKey || apiKey === 'your-api-key-here') {
+    if (!config.hasApiKey('GEMINI')) {
       logger.warn('Gemini API key not configured', { 
         keyExists: !!apiKey,
-        isPlaceholder: apiKey === 'your-api-key-here'
+        isPlaceholder: !!apiKey
       });
       return;
     }
@@ -40,6 +55,39 @@ class LLMService {
         error: error.message 
       });
     }
+  }
+
+  initializeAnthropicClient() {
+    if (!config.hasApiKey('ANTHROPIC')) {
+      logger.warn('Anthropic API key not configured');
+      return;
+    }
+
+    try {
+      this.client = new Anthropic({
+        apiKey: config.getApiKey('ANTHROPIC').trim(),
+        maxRetries: config.get('llm.anthropic.maxRetries'),
+        timeout: config.get('llm.anthropic.timeout'),
+        // speech.service installs window/document/navigator polyfills in the
+        // main process, which the SDK mistakes for a browser. This is Node:
+        // the key never reaches web content.
+        dangerouslyAllowBrowser: true
+      });
+      this.model = (process.env.ANTHROPIC_MODEL || '').trim() || config.get('llm.anthropic.model');
+      this.isInitialized = true;
+
+      logger.info('Anthropic client initialized successfully', {
+        model: this.model
+      });
+    } catch (error) {
+      logger.error('Failed to initialize Anthropic client', {
+        error: error.message
+      });
+    }
+  }
+
+  providerConfig(key) {
+    return config.get(`llm.${this.provider}.${key}`);
   }
 
   getGenerationConfig(overrides = {}) {
@@ -123,7 +171,7 @@ class LLMService {
    */
   async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     if (!imageBuffer || !Buffer.isBuffer(imageBuffer)) {
@@ -161,7 +209,7 @@ class LLMService {
 
       // Execute with retries/timeout - try alternative method first for network reliability
       let responseText;
-      const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
+      const preferAlternative = !!this.providerConfig('enableFallbackMethod');
       try {
         if (preferAlternative) {
           logger.debug('Attempting alternative HTTPS method first for reliability');
@@ -177,7 +225,7 @@ class LLMService {
         try {
           responseText = await secondaryFn(request);
         } catch (secondaryError) {
-          logger.error('Both Gemini request methods failed', {
+          logger.error('Both LLM request methods failed', {
             firstError: error.message,
             secondError: secondaryError.message
           });
@@ -218,7 +266,7 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      if (config.get('llm.gemini.fallbackEnabled')) {
+      if (this.providerConfig('fallbackEnabled')) {
         return this.generateFallbackResponse('[image]', activeSkill);
       }
       throw error;
@@ -227,7 +275,7 @@ class LLMService {
 
   async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     if (!imageBuffer || !Buffer.isBuffer(imageBuffer)) {
@@ -304,7 +352,7 @@ class LLMService {
 
   async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     const startTime = Date.now();
@@ -321,7 +369,7 @@ class LLMService {
 
       const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage);
 
-      const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
+      const preferAlternative = !!this.providerConfig('enableFallbackMethod');
       let response;
       try {
         if (preferAlternative) {
@@ -340,7 +388,7 @@ class LLMService {
         try {
           response = await secondaryFn(geminiRequest);
         } catch (secondaryError) {
-          logger.error('Both Gemini request methods failed for text processing', {
+          logger.error('Both LLM request methods failed for text processing', {
             firstError: error.message,
             secondError: secondaryError.message,
             requestId: this.requestCount
@@ -381,7 +429,7 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      if (config.get('llm.gemini.fallbackEnabled')) {
+      if (this.providerConfig('fallbackEnabled')) {
         return this.generateFallbackResponse(text, activeSkill);
       }
 
@@ -391,7 +439,7 @@ class LLMService {
 
   async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     const startTime = Date.now();
@@ -439,7 +487,7 @@ class LLMService {
 
   async processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     const startTime = Date.now();
@@ -456,7 +504,7 @@ class LLMService {
 
       const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
 
-      const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
+      const preferAlternative = !!this.providerConfig('enableFallbackMethod');
       let response;
       try {
         if (preferAlternative) {
@@ -475,7 +523,7 @@ class LLMService {
         try {
           response = await secondaryFn(geminiRequest);
         } catch (secondaryError) {
-          logger.error('Both Gemini request methods failed for transcription processing', {
+          logger.error('Both LLM request methods failed for transcription processing', {
             firstError: error.message,
             secondError: secondaryError.message,
             requestId: this.requestCount
@@ -517,7 +565,7 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      if (config.get('llm.gemini.fallbackEnabled')) {
+      if (this.providerConfig('fallbackEnabled')) {
         return this.generateIntelligentFallbackResponse(text, activeSkill);
       }
       
@@ -838,7 +886,117 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     return `Context: ${activeSkill.toUpperCase()} analysis request\n\nText to analyze:\n${text}`;
   }
 
+  /**
+   * Translate the Gemini-shaped request the builders produce
+   * ({contents, systemInstruction}) into Claude Messages API params.
+   */
+  buildAnthropicParams(geminiRequest, overrides = {}) {
+    const messages = [];
+
+    for (const item of geminiRequest.contents || []) {
+      const images = [];
+      const texts = [];
+      for (const part of item.parts || []) {
+        if (part?.inlineData?.data) {
+          images.push({
+            type: 'image',
+            source: { type: 'base64', media_type: part.inlineData.mimeType, data: part.inlineData.data }
+          });
+        } else if (typeof part?.text === 'string' && part.text.trim().length > 0) {
+          texts.push({ type: 'text', text: part.text });
+        }
+      }
+      if (images.length || texts.length) {
+        messages.push({
+          role: item.role === 'model' ? 'assistant' : 'user',
+          content: [...images, ...texts]
+        });
+      }
+    }
+
+    // The Messages API requires the conversation to open with a user turn;
+    // a trimmed history window can start on a model reply.
+    while (messages.length && messages[0].role !== 'user') {
+      messages.shift();
+    }
+    if (!messages.length) {
+      throw new Error('No valid content to send to Claude API');
+    }
+
+    const params = {
+      model: this.model,
+      max_tokens: config.get('llm.anthropic.maxTokens'),
+      cache_control: { type: 'ephemeral' },
+      messages
+    };
+
+    const system = (geminiRequest.systemInstruction?.parts || [])
+      .map(part => part.text)
+      .filter(Boolean)
+      .join('\n\n');
+    if (system) {
+      params.system = system;
+    }
+
+    const effort = (process.env.ANTHROPIC_EFFORT || '').trim() || config.get('llm.anthropic.effort');
+    if (effort) {
+      params.output_config = { effort };
+    }
+
+    // Let the API re-run a safety-classifier decline on a fallback model.
+    if (ANTHROPIC_SERVER_FALLBACK_MODELS.includes(this.model)) {
+      params.betas = ['server-side-fallback-2026-07-01'];
+      params.fallbacks = 'default';
+    }
+
+    return { ...params, ...overrides };
+  }
+
+  /**
+   * Run a Claude request. Always streams (so long answers can't hit HTTP
+   * timeouts); onDelta is optional. Retries are handled by the SDK.
+   */
+  async executeAnthropicRequest(geminiRequest, onDelta = null, overrides = {}) {
+    const stream = this.client.beta.messages.stream(this.buildAnthropicParams(geminiRequest, overrides));
+
+    if (typeof onDelta === 'function') {
+      stream.on('text', (delta) => onDelta(delta));
+    }
+
+    const message = await stream.finalMessage();
+
+    if (message.stop_reason === 'refusal') {
+      throw new Error(`Claude declined this request (${message.stop_details?.category || 'refusal'})`);
+    }
+    if (message.stop_reason === 'max_tokens') {
+      logger.warn('Claude response reached max tokens limit', { model: message.model });
+    }
+
+    const text = message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+      .trim();
+
+    if (!text) {
+      throw new Error('Empty response from Claude API');
+    }
+
+    logger.debug('Claude API request successful', {
+      model: message.model,
+      responseLength: text.length,
+      stopReason: message.stop_reason,
+      cacheReadTokens: message.usage?.cache_read_input_tokens
+    });
+
+    return text;
+  }
+
   async executeRequest(geminiRequest) {
+    if (this.provider === 'anthropic') {
+      return this.executeAnthropicRequest(geminiRequest);
+    }
+
     const maxRetries = config.get('llm.gemini.maxRetries');
     const timeout = config.get('llm.gemini.timeout');
     const primaryModel = this.model;
@@ -980,7 +1138,7 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
    */
   async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
     if (!this.isInitialized) {
-      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+      throw new Error('LLM service not initialized. Check your API key configuration.');
     }
 
     const startTime = Date.now();
@@ -1054,6 +1212,10 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
    * for each chunk.
    */
   async executeStreamingRequest(geminiRequest, onDelta) {
+    if (this.provider === 'anthropic') {
+      return this.executeAnthropicRequest(geminiRequest, onDelta);
+    }
+
     const maxRetries = config.get('llm.gemini.maxRetries');
     const apiKey = config.getApiKey('GEMINI');
     const primaryModel = this.model;
@@ -1276,10 +1438,14 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   }
 
   async checkNetworkConnectivity() {
-    const connectivityTests = [
-      { host: 'google.com', port: 443, name: 'Google (HTTPS)' },
-      { host: 'generativelanguage.googleapis.com', port: 443, name: 'Gemini API Endpoint' }
-    ];
+    const connectivityTests = this.provider === 'anthropic'
+      ? [
+          { host: 'api.anthropic.com', port: 443, name: 'Claude API Endpoint' }
+        ]
+      : [
+          { host: 'google.com', port: 443, name: 'Google (HTTPS)' },
+          { host: 'generativelanguage.googleapis.com', port: 443, name: 'Gemini API Endpoint' }
+        ];
 
     const results = await Promise.allSettled(
       connectivityTests.map(test => this.testNetworkConnection(test))
@@ -1330,7 +1496,7 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       'dsa': 'This appears to be a data structures and algorithms problem. Consider breaking it down into smaller components and identifying the appropriate algorithm or data structure to use.',
       'system-design': 'For this system design question, consider scalability, reliability, and the trade-offs between different architectural approaches.',
       'programming': 'This looks like a programming challenge. Focus on understanding the requirements, edge cases, and optimal time/space complexity.',
-      'default': 'I can help analyze this content. Please ensure your Gemini API key is properly configured for detailed analysis.'
+      'default': 'I can help analyze this content. Please ensure your API key is properly configured for detailed analysis.'
     };
 
     const response = fallbackResponses[activeSkill] || fallbackResponses.default;
@@ -1401,6 +1567,31 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       
       if (hasNetworkIssues) {
         logger.warn('Network connectivity issues detected', networkCheck);
+      }
+
+      if (this.provider === 'anthropic') {
+        const startTime = Date.now();
+        const text = await this.executeAnthropicRequest(
+          { contents: [{ role: 'user', parts: [{ text: 'Test connection. Please respond with "OK".' }] }] },
+          null,
+          { max_tokens: 1024 }
+        );
+        const latency = Date.now() - startTime;
+
+        logger.info('Connection test successful', {
+          response: text,
+          latency,
+          model: this.model,
+          networkCheck: hasNetworkIssues ? 'issues_detected' : 'healthy'
+        });
+
+        return {
+          success: true,
+          response: text,
+          latency,
+          model: this.model,
+          networkConnectivity: networkCheck
+        };
       }
 
       const generationConfig = this.getGenerationConfig({ temperature: 0, maxOutputTokens: 64 });
@@ -1484,6 +1675,27 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
    * Translate raw SDK / network errors into something a user can act on.
    */
   _friendlyTestError(error, analysis) {
+    if (this.provider === 'anthropic') {
+      if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
+        return 'Invalid API key or insufficient permissions. Double-check the key at platform.claude.com/settings/keys.';
+      }
+      if (error instanceof Anthropic.NotFoundError) {
+        return `The configured Claude model (${this.model}) is unavailable. Check ANTHROPIC_MODEL.`;
+      }
+      if (error instanceof Anthropic.RateLimitError) {
+        return 'Rate limit exceeded. Wait a moment or check your Anthropic usage limits.';
+      }
+      if (error instanceof Anthropic.APIConnectionError) {
+        return 'Cannot reach Anthropic servers. Check your internet connection, firewall, or VPN settings.';
+      }
+      if (error instanceof Anthropic.APIError) {
+        return error.status >= 500
+          ? 'Claude is temporarily unavailable. Please wait a moment and try again.'
+          : (error.error?.error?.message || error.message);
+      }
+      return error?.message || 'Connection failed';
+    }
+
     const type = analysis?.type;
     const raw = (error?.message || '').toLowerCase();
 
@@ -1509,9 +1721,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     return (error?.message || 'Connection failed').replace(/^\[(GoogleGenerativeAI|GoogleGenAI) Error\]:\s*/i, '');
   }
 
-  updateApiKey(newApiKey) {
-    process.env.GEMINI_API_KEY = newApiKey;
-    this.isInitialized = false;
+  updateApiKey(newApiKey, provider = this.provider) {
+    process.env[provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY'] = newApiKey;
     this.initializeClient();
     
     logger.info('API key updated and client reinitialized');
@@ -1520,10 +1731,12 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   getStats() {
     return {
       isInitialized: this.isInitialized,
+      provider: this.provider,
+      model: this.model,
       requestCount: this.requestCount,
       errorCount: this.errorCount,
       successRate: this.requestCount > 0 ? ((this.requestCount - this.errorCount) / this.requestCount) * 100 : 0,
-      config: config.get('llm.gemini')
+      config: config.get(`llm.${this.provider}`)
     };
   }
 
@@ -1532,6 +1745,10 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   }
 
   async executeAlternativeRequest(geminiRequest) {
+    if (this.provider === 'anthropic') {
+      return this.executeAnthropicRequest(geminiRequest);
+    }
+
     const https = require('https');
     const apiKey = config.getApiKey('GEMINI');
     const primaryModel = config.get('llm.gemini.model');

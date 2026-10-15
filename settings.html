@@ -459,15 +459,32 @@
             <div class="settings-section">
                 <div class="settings-section-title">
                     <i class="fas fa-robot"></i>
-                    Gemini Settings
+                    AI Model Settings
                 </div>
                 <div class="settings-section-content">
                     <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">AI Provider</div>
+                            <div class="settings-item-description">Which service generates answers</div>
+                        </div>
+                        <select class="input-field" id="llmProvider">
+                            <option value="gemini">Google Gemini</option>
+                            <option value="anthropic">Anthropic Claude</option>
+                        </select>
+                    </div>
+                    <div class="settings-item" id="geminiKeyItem">
                         <div>
                             <div class="settings-item-label">Google API Key</div>
                             <div class="settings-item-description">Your Google API key for Gemini models</div>
                         </div>
                         <input type="password" class="input-field" id="geminiKey" placeholder="Enter your Google API key">
+                    </div>
+                    <div class="settings-item" id="anthropicKeyItem">
+                        <div>
+                            <div class="settings-item-label">Anthropic API Key</div>
+                            <div class="settings-item-description">Your Anthropic API key for Claude models</div>
+                        </div>
+                        <input type="password" class="input-field" id="anthropicKey" placeholder="sk-ant-…">
                     </div>
                 </div>
             </div>

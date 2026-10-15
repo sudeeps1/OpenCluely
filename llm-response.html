@@ -527,6 +527,19 @@
             if (window.electronAPI) {
                 console.log('[LLM-RESPONSE] Setting up IPC listeners...');
                 
+                // Scroll from a global shortcut (works without clicking the window)
+                if (window.electronAPI.onScrollLlmResponse) {
+                    window.electronAPI.onScrollLlmResponse((event, data) => {
+                        const direction = data && data.direction < 0 ? -1 : 1;
+                        scrollableElements.forEach(element => {
+                            if (element) {
+                                // 'instant' so repeated presses add up instead of restarting a smooth animation
+                                element.scrollBy({ top: direction * Math.round(element.clientHeight * 0.5), behavior: 'instant' });
+                            }
+                        });
+                    });
+                }
+
                 // Set up show-loading event listener
                 window.electronAPI.onShowLoading(() => {
                     console.log('[LLM-RESPONSE] show-loading received');

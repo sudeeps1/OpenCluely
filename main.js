@@ -408,6 +408,9 @@ class ApplicationController {
       "CommandOrControl+Down": () => this.handleDownArrow(),
       "CommandOrControl+Left": () => this.handleLeftArrow(),
       "CommandOrControl+Right": () => this.handleRightArrow(),
+      // Scroll the answer window without clicking it
+      "Control+Alt+Up": () => windowManager.scrollLLMResponse(-1),
+      "Control+Alt+Down": () => windowManager.scrollLLMResponse(1),
     };
 
     Object.entries(shortcuts).forEach(([accelerator, handler]) => {
@@ -1607,6 +1610,8 @@ class ApplicationController {
       whisperResponseTarget: process.env.WHISPER_RESPONSE_TARGET || "both",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
       geminiKey: process.env.GEMINI_API_KEY || "",
+      llmProvider: llmService.provider,
+      anthropicKey: process.env.ANTHROPIC_API_KEY || "",
 
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
@@ -1678,6 +1683,12 @@ class ApplicationController {
       if (settings.geminiKey !== undefined) {
         envUpdates.GEMINI_API_KEY = settings.geminiKey;
       }
+      if (settings.llmProvider === "gemini" || settings.llmProvider === "anthropic") {
+        envUpdates.LLM_PROVIDER = settings.llmProvider;
+      }
+      if (settings.anthropicKey !== undefined) {
+        envUpdates.ANTHROPIC_API_KEY = settings.anthropicKey;
+      }
 
       // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
       // mutates process.env in place, so comparing afterwards would always read
@@ -1687,17 +1698,20 @@ class ApplicationController {
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);
 
-      // If the Gemini key was just saved, reinitialize the LLM service
+      // If an LLM key or the provider was just saved, reinitialize the LLM service
       // so the new client picks up the key. Without this, the test-
       // connection button in the onboarding wizard fails with
       // "Service not initialized" because the client was first created
       // at app startup, before any key was set.
-      if (settings.geminiKey !== undefined && envUpdates.GEMINI_API_KEY !== undefined) {
+      if (envUpdates.GEMINI_API_KEY !== undefined || envUpdates.ANTHROPIC_API_KEY !== undefined ||
+          envUpdates.LLM_PROVIDER !== undefined) {
         try {
           llmService.initializeClient();
-          logger.info("LLM service reinitialized after Gemini key update");
+          logger.info("LLM service reinitialized after LLM settings update", {
+            provider: llmService.provider
+          });
         } catch (e) {
-          logger.warn("Failed to reinitialize LLM service after Gemini key update", {
+          logger.warn("Failed to reinitialize LLM service after LLM settings update", {
             error: e.message
           });
         }
@@ -1963,6 +1977,10 @@ class ApplicationController {
             if (app.getName() !== appName) {
               app.setName(appName);
             }
+            // Setting process.title re-registers the app with macOS as a
+            // regular Dock app, which stops the overlays from appearing over
+            // full-screen apps. Hide the Dock icon again afterwards.
+            windowManager.ensureHiddenFromDock();
           }
         }, delay);
       });

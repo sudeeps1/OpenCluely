@@ -17,6 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const whisperResponseTargetSelect = document.getElementById('whisperResponseTarget');
     const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
     const geminiKeyInput = document.getElementById('geminiKey');
+    const llmProviderSelect = document.getElementById('llmProvider');
+    const anthropicKeyInput = document.getElementById('anthropicKey');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -88,6 +90,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperResponseTargetSelect) whisperResponseTargetSelect.value = settings.whisperResponseTarget || 'both';
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
+        if (llmProviderSelect) llmProviderSelect.value = settings.llmProvider || 'gemini';
+        if (anthropicKeyInput) anthropicKeyInput.value = settings.anthropicKey || '';
+        updateLlmProviderVisibility();
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -147,6 +152,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperResponseTargetSelect) settings.whisperResponseTarget = whisperResponseTargetSelect.value;
         if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
         if (geminiKeyInput) settings.geminiKey = geminiKeyInput.value;
+        if (llmProviderSelect) settings.llmProvider = llmProviderSelect.value;
+        if (anthropicKeyInput) settings.anthropicKey = anthropicKeyInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
@@ -196,6 +203,8 @@ document.addEventListener('DOMContentLoaded', () => {
         whisperResponseTargetSelect,
         whisperSegmentMsInput,
         geminiKeyInput,
+        llmProviderSelect,
+        anthropicKeyInput,
         windowGapInput
     ];
 
@@ -212,6 +221,20 @@ document.addEventListener('DOMContentLoaded', () => {
             saveSettings();
         });
     }
+
+    // Show only the API-key field for the selected AI provider
+    function updateLlmProviderVisibility() {
+        const provider = llmProviderSelect ? llmProviderSelect.value : 'gemini';
+        const geminiItem = document.getElementById('geminiKeyItem');
+        const anthropicItem = document.getElementById('anthropicKeyItem');
+        if (geminiItem) geminiItem.style.display = provider === 'gemini' ? '' : 'none';
+        if (anthropicItem) anthropicItem.style.display = provider === 'anthropic' ? '' : 'none';
+    }
+
+    if (llmProviderSelect) {
+        llmProviderSelect.addEventListener('change', updateLlmProviderVisibility);
+    }
+    updateLlmProviderVisibility();
 
     // Language selection handler
     if (codingLanguageSelect) {

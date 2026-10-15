@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onOpenGeminiConfig: (callback) => ipcRenderer.on('open-gemini-config', callback),
   onDisplayLlmResponse: (callback) => ipcRenderer.on('display-llm-response', callback),
   onShowLoading: (callback) => ipcRenderer.on('show-loading', callback),
+  onScrollLlmResponse: (callback) => ipcRenderer.on('scroll-llm-response', callback),
   onSkillChanged: (callback) => ipcRenderer.on('skill-changed', callback),
   onInteractionModeChanged: (callback) => ipcRenderer.on('interaction-mode-changed', callback),
   onRecordingStarted: (callback) => ipcRenderer.on('recording-started', callback),
