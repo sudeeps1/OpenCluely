@@ -1,4 +1,8 @@
-const { desktopCapturer, screen } = require('electron');
+const { desktopCapturer, screen, BrowserWindow } = require('electron');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const logger = require('../core/logger').createServiceLogger('CAPTURE');
 
 class CaptureService {
@@ -62,6 +66,118 @@ class CaptureService {
     } finally {
       this.isProcessing = false;
     }
+  }
+
+  /**
+   * Let the user drag out a part of the screen and return it as an image.
+   * Resolves to null if the user cancels (Esc).
+   * macOS uses the system's own selection tool; other platforms get a
+   * full-screen selection overlay.
+   */
+  async captureRegion() {
+    if (this.isProcessing) throw new Error('Capture already in progress');
+    this.isProcessing = true;
+    const startTime = Date.now();
+    try {
+      if (process.platform === 'darwin') {
+        const imageBuffer = await this._captureRegionMac();
+        if (!imageBuffer) return null;
+        logger.logPerformance('Area screenshot capture', startTime, { bytes: imageBuffer.length });
+        return {
+          imageBuffer,
+          mimeType: 'image/png',
+          metadata: { timestamp: new Date().toISOString(), area: 'interactive', processingTime: Date.now() - startTime }
+        };
+      }
+
+      const selection = await this._selectAreaWithOverlay();
+      if (!selection) return null;
+      // Give the overlay a moment to disappear before capturing
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const { image, metadata } = await this.captureScreenshot({ displayId: selection.displayId });
+      const cropped = image.crop(selection.area);
+      const imageBuffer = cropped.toPNG();
+      logger.logPerformance('Area screenshot capture', startTime, { bytes: imageBuffer.length, dimensions: cropped.getSize() });
+      return {
+        imageBuffer,
+        mimeType: 'image/png',
+        metadata: { timestamp: new Date().toISOString(), source: metadata, area: selection.area, processingTime: Date.now() - startTime }
+      };
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  _captureRegionMac() {
+    const file = path.join(os.tmpdir(), `opencluely-area-${process.pid}-${Date.now()}.png`);
+    return new Promise((resolve) => {
+      // -i: drag to select (Space switches to window mode, Esc cancels); -x: no sound
+      execFile('/usr/sbin/screencapture', ['-i', '-x', file], () => {
+        try {
+          const buffer = fs.readFileSync(file);
+          fs.unlink(file, () => {});
+          resolve(buffer.length ? buffer : null);
+        } catch (_) {
+          resolve(null); // no file: the user cancelled
+        }
+      });
+    });
+  }
+
+  _selectAreaWithOverlay() {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const { x, y, width, height } = display.bounds;
+    const overlay = new BrowserWindow({
+      x, y, width, height,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      alwaysOnTop: true,
+      enableLargerThanScreen: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
+    overlay.setAlwaysOnTop(true, 'screen-saver');
+
+    // The page reports the result through its title: "area:x,y,w,h" or "cancel"
+    const html = `<!doctype html><html><head><title>select</title><style>
+      html,body{margin:0;height:100%;cursor:crosshair;background:rgba(0,0,0,0.25);user-select:none;overflow:hidden}
+      #box{position:fixed;border:2px solid #4da3ff;background:rgba(77,163,255,0.15);display:none}
+      #hint{position:fixed;top:16px;left:50%;transform:translateX(-50%);color:#fff;font:13px -apple-system,Segoe UI,sans-serif;background:rgba(0,0,0,0.6);padding:6px 12px;border-radius:6px}
+    </style></head><body><div id="hint">Drag to select an area. Esc to cancel.</div><div id="box"></div><script>
+      let start = null; const box = document.getElementById('box');
+      const rect = (e) => ({ x: Math.min(start.x, e.clientX), y: Math.min(start.y, e.clientY), w: Math.abs(e.clientX - start.x), h: Math.abs(e.clientY - start.y) });
+      addEventListener('mousedown', (e) => { start = { x: e.clientX, y: e.clientY }; box.style.display = 'block'; });
+      addEventListener('mousemove', (e) => { if (!start) return; const r = rect(e); Object.assign(box.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' }); });
+      addEventListener('mouseup', (e) => { if (!start) return; const r = rect(e); start = null; document.title = (r.w > 4 && r.h > 4) ? 'area:' + [r.x, r.y, r.w, r.h].map(Math.round).join(',') : 'cancel'; });
+      addEventListener('keydown', (e) => { if (e.key === 'Escape') document.title = 'cancel'; });
+    </script></body></html>`;
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (!overlay.isDestroyed()) overlay.close();
+        resolve(result);
+      };
+      overlay.on('page-title-updated', (event, title) => {
+        event.preventDefault();
+        if (title === 'cancel') return finish(null);
+        if (title.startsWith('area:')) {
+          const [ax, ay, aw, ah] = title.slice(5).split(',').map(Number);
+          finish({ displayId: display.id, area: { x: ax, y: ay, width: aw, height: ah } });
+        }
+      });
+      overlay.on('closed', () => finish(null));
+      overlay.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+      overlay.once('ready-to-show', () => overlay.focus());
+    });
   }
 
   async captureScreenshot(options = {}) {

@@ -347,8 +347,10 @@ class WindowManager {
         titleBarOverlay: false,
         transparent: true,
         backgroundColor: '#00000000',
-  // Allow resizing so users can adjust width; we will lock height in handlers
-  resizable: true,
+  // Not user-resizable: a resize cursor at the edge would show in screen
+  // recordings even though the window itself is hidden from them. Size is
+  // still set programmatically.
+  resizable: false,
     // Keep the original max width as cap; allow small min width so it can collapse to one icon
     minWidth: 60,
     maxWidth: this.windowConfigs.main.width,
@@ -375,7 +377,7 @@ class WindowManager {
         titleBarStyle: 'hidden',
         transparent: true,
         backgroundColor: '#00000000',
-        resizable: true,
+        resizable: false, // no edge resize cursor (see main window)
         minimizable: false,
         maximizable: false,
         closable: false,
@@ -399,7 +401,7 @@ class WindowManager {
         frame: false,
         titleBarStyle: 'hidden',
         transparent: true,
-        resizable: true,
+        resizable: false, // no edge resize cursor (see main window)
         minimizable: false,
         maximizable: false,
         closable: false,
@@ -463,6 +465,16 @@ class WindowManager {
       }
     });
 
+  // The overlays are hidden from screen recordings, but the mouse cursor is
+  // not: a pointer, I-beam or grab cursor appearing over "nothing" would give
+  // them away. Keep the plain arrow everywhere inside them.
+    if (['main', 'llmResponse', 'chat'].includes(type)) {
+      window.webContents.on('did-finish-load', () => {
+        window.webContents.insertCSS('*, *::before, *::after { cursor: default !important; }')
+          .catch((error) => logger.debug('Could not apply cursor style', { type, error: error.message }));
+      });
+    }
+
   // Load the HTML file
     await window.loadFile(windowConfig.file);
     
@@ -488,6 +500,12 @@ class WindowManager {
           // Set a conservative minimum width; height will be adjusted via IPC as needed
           window.setMinimumSize(60, windowConfig.height);
         }
+        // macOS can switch user resizing back on after the bar is resized to
+        // fit its content; keep it off (programmatic resizing still works).
+        window.setResizable(false);
+        window.on('resize', () => {
+          if (!window.isDestroyed() && window.isResizable()) window.setResizable(false);
+        });
 
         // Intercept user-initiated resizes to lock height and allow width changes only
         window.on('will-resize', (event, newBounds) => {
@@ -841,6 +859,31 @@ class WindowManager {
     }
   }
 
+  /**
+   * Re-apply what lets the overlays appear on every Space, including over
+   * full-screen apps (used after the Mac wakes or the screen is unlocked).
+   */
+  refreshOverlays() {
+    if (process.platform !== 'darwin') return;
+    this.windows.forEach((window) => {
+      if (!window || window.isDestroyed()) return;
+      try {
+        window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        window.setAlwaysOnTop(true, 'screen-saver', 2);
+      } catch (error) {
+        logger.debug('Could not refresh overlay window', { error: error.message });
+      }
+    });
+    this.ensureHiddenFromDock();
+    // Visible overlays are re-shown so they join the current Space again
+    ['main', 'llmResponse', 'chat'].forEach((type) => {
+      const window = this.windows.get(type);
+      if (window && !window.isDestroyed() && window.isVisible()) {
+        this.showOnCurrentDesktop(window, { activate: false });
+      }
+    });
+  }
+
   showOnCurrentDesktop(win, options = {}) {
     if (!win || win.isDestroyed()) return;
 
@@ -900,8 +943,14 @@ class WindowManager {
       // Linux/Windows
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       win.setAlwaysOnTop(true);
-      win.show();
-      win.focus();
+      // Same as macOS: overlays appear without taking keyboard focus from the
+      // app the user is working in.
+      if (activate) {
+        win.show();
+        win.focus();
+      } else {
+        win.showInactive();
+      }
       setTimeout(() => {
         if (win.isDestroyed()) return;
         if (!isLLM) {
@@ -1099,10 +1148,10 @@ class WindowManager {
     });
     
     this.isVisible = true;
-    // On macOS, un-hiding the overlays must not pull keyboard focus away from
-    // the app the user is working in.
+    // On macOS and Windows, un-hiding the overlays must not pull keyboard
+    // focus away from the app the user is working in.
     const activeWindow = this.windows.get(this.activeWindow);
-    if (activeWindow && process.platform !== 'darwin') {
+    if (activeWindow && process.platform === 'linux') {
       activeWindow.focus();
     }
     
@@ -1761,6 +1810,11 @@ class WindowManager {
       }
       
       this.lastActiveSpace = currentSpaceSignature;
+
+      // Self-heal: anything that re-registers the app as a regular Dock app
+      // (e.g. a process-title change) would keep the overlays off
+      // full-screen apps.
+      this.ensureHiddenFromDock();
     }
   }
 

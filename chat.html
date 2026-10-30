@@ -789,11 +789,7 @@
         }
       }
 
-      function clearChatHistory(skipConfirm = false) {
-        if (!skipConfirm) {
-          const ok = confirm('Clear chat history?');
-          if (!ok) return;
-        }
+      function clearChatHistory() {
         chatHistory = [];
         saveHistory();
         // Clear DOM
@@ -839,7 +835,7 @@
       // Clear on session-cleared from main
       if (whysperAPI && whysperAPI.onSessionCleared) {
         whysperAPI.onSessionCleared(() => {
-          clearChatHistory(true);
+          clearChatHistory();
         });
       }
 

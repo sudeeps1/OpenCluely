@@ -154,6 +154,7 @@ For Azure Speech, create a Speech resource in the [Azure Portal](https://portal.
 | Action | Shortcut | Description |
 |---|---|---|
 | Screenshot capture | `Cmd/Ctrl + Shift + S` | Capture the screen and analyze it with Gemini |
+| Area screenshot | `Cmd/Ctrl + Shift + X` | Drag to select part of the screen and analyze just that |
 | Toggle speech | `Alt + R` | Start or stop voice recognition, if configured |
 | Toggle visibility | `Cmd/Ctrl + Shift + V` | Show or hide all windows |
 | Toggle interaction | `Cmd/Ctrl + Shift + I` or `Alt + A` | Enable or disable click through |

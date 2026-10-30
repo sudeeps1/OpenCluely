@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { fileURLToPath } = require("url");
-const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor } = require("electron");
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -260,6 +260,15 @@ class ApplicationController {
       const isFirstRun = status.needsOnboarding;
 
       await windowManager.initializeWindows({ showMainWindow: !isFirstRun });
+
+      // After sleep or a screen lock, macOS can stop drawing the overlays over
+      // full-screen apps until their Space and Dock settings are re-applied.
+      for (const event of ["resume", "unlock-screen"]) {
+        powerMonitor.on(event, () => {
+          logger.info("Re-applying overlay settings after " + event);
+          setTimeout(() => windowManager.refreshOverlays(), 1000);
+        });
+      }
       this.setupGlobalShortcuts();
 
       // Initialize default stealth mode with terminal icon
@@ -391,6 +400,7 @@ class ApplicationController {
   setupGlobalShortcuts() {
     const shortcuts = {
       "CommandOrControl+Shift+S": () => this.triggerScreenshotOCR(),
+      "CommandOrControl+Shift+X": () => this.triggerScreenshotOCR({ area: true }),
       "CommandOrControl+Shift+V": () => windowManager.toggleVisibility(),
       "CommandOrControl+Shift+I": () => windowManager.toggleInteraction(),
       "CommandOrControl+Shift+C": () => windowManager.switchToWindow("chat"),
@@ -460,6 +470,7 @@ class ApplicationController {
 
   setupIPCHandlers() {
   ipcMain.handle("take-screenshot", () => this.triggerScreenshotOCR());
+  ipcMain.handle("take-area-screenshot", () => this.triggerScreenshotOCR({ area: true }));
   ipcMain.handle("list-displays", () => captureService.listDisplays());
   ipcMain.handle("capture-area", (event, options) => captureService.captureAndProcess(options));
     
@@ -1068,18 +1079,36 @@ class ApplicationController {
     windowManager.broadcastToAllWindows("skill-updated", { skill: newSkill });
   }
 
-  async triggerScreenshotOCR() {
+  async triggerScreenshotOCR(options = {}) {
     if (!this.isReady) {
       logger.warn("Screenshot requested before application ready");
+      return;
+    }
+
+    // A press while the previous screenshot is still being captured would
+    // fail and hide the answer that is on its way; ignore it instead.
+    if (captureService.isProcessing) {
+      logger.info("Screenshot already in progress; ignoring repeated shortcut press");
       return;
     }
 
     const startTime = Date.now();
 
     try {
-      windowManager.showLLMLoading();
-
-  const capture = await captureService.captureAndProcess();
+      let capture;
+      if (options.area) {
+        // Let the user drag out the area first; show "thinking" only after
+        // they pick one, so the loading window isn't in the way.
+        capture = await captureService.captureRegion();
+        if (!capture) {
+          logger.info("Area screenshot cancelled");
+          return;
+        }
+        windowManager.showLLMLoading();
+      } else {
+        windowManager.showLLMLoading();
+        capture = await captureService.captureAndProcess();
+      }
 
       if (!capture.imageBuffer || !capture.imageBuffer.length) {
         windowManager.hideLLMResponse();
