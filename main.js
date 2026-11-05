@@ -400,7 +400,8 @@ class ApplicationController {
   setupGlobalShortcuts() {
     const shortcuts = {
       "CommandOrControl+Shift+S": () => this.triggerScreenshotOCR(),
-      "CommandOrControl+Shift+X": () => this.triggerScreenshotOCR({ area: true }),
+      "CommandOrControl+Shift+X": () => this.triggerScreenshotOCR({ area: true, newChat: true }),
+      "Control+Alt+X": () => this.triggerScreenshotOCR({ area: true, continueChat: true }),
       "CommandOrControl+Shift+V": () => windowManager.toggleVisibility(),
       "CommandOrControl+Shift+I": () => windowManager.toggleInteraction(),
       "CommandOrControl+Shift+C": () => windowManager.switchToWindow("chat"),
@@ -421,6 +422,7 @@ class ApplicationController {
       // Scroll the answer window without clicking it
       "Control+Alt+Up": () => windowManager.scrollLLMResponse(-1),
       "Control+Alt+Down": () => windowManager.scrollLLMResponse(1),
+      "Control+Alt+L": () => this.cycleCodingLanguage(),
     };
 
     Object.entries(shortcuts).forEach(([accelerator, handler]) => {
@@ -470,7 +472,7 @@ class ApplicationController {
 
   setupIPCHandlers() {
   ipcMain.handle("take-screenshot", () => this.triggerScreenshotOCR());
-  ipcMain.handle("take-area-screenshot", () => this.triggerScreenshotOCR({ area: true }));
+  ipcMain.handle("take-area-screenshot", () => this.triggerScreenshotOCR({ area: true, newChat: true }));
   ipcMain.handle("list-displays", () => captureService.listDisplays());
   ipcMain.handle("capture-area", (event, options) => captureService.captureAndProcess(options));
     
@@ -616,8 +618,7 @@ class ApplicationController {
     });
 
     ipcMain.handle("clear-session-memory", () => {
-      sessionManager.clear();
-      windowManager.broadcastToAllWindows("session-cleared");
+      this.clearSessionMemory();
       return { success: true };
     });
 
@@ -989,6 +990,7 @@ class ApplicationController {
 
   clearSessionMemory() {
     try {
+      this.chatGeneration = (this.chatGeneration || 0) + 1;
       sessionManager.clear();
       windowManager.broadcastToAllWindows("session-cleared");
       logger.info("Session memory cleared via global shortcut");
@@ -1039,6 +1041,22 @@ class ApplicationController {
       windowManager.moveBoundWindows(20, 0);
     }
     // Interactive mode: Right arrow does nothing
+  }
+
+  // Switch to the next coding language and briefly show which one is active
+  cycleCodingLanguage() {
+    const languages = [
+      ["cpp", "C++"],
+      ["c", "C"],
+      ["python", "Python"],
+      ["java", "Java"],
+      ["javascript", "JavaScript"],
+      ["sql", "SQL"],
+    ];
+    const currentIndex = languages.findIndex(([id]) => id === this.codingLanguage);
+    const [id, label] = languages[(currentIndex + 1) % languages.length];
+    this.saveSettings({ codingLanguage: id });
+    windowManager.showToast(`Language: ${label}`);
   }
 
   navigateSkill(direction) {
@@ -1104,6 +1122,10 @@ class ApplicationController {
           logger.info("Area screenshot cancelled");
           return;
         }
+        // Only after an area is picked, so cancelling keeps the current chat
+        if (options.newChat) {
+          this.clearSessionMemory();
+        }
         windowManager.showLLMLoading();
       } else {
         windowManager.showLLMLoading();
@@ -1115,6 +1137,10 @@ class ApplicationController {
         this.broadcastOCRError("Failed to capture screenshot image");
         return;
       }
+
+      // An answer still in flight when a new chat starts belongs to the old
+      // chat; drop it rather than letting it land in the new one.
+      const chatGeneration = this.chatGeneration;
 
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
@@ -1136,14 +1162,22 @@ class ApplicationController {
         sessionHistory.recent,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
+          if (chatGeneration !== this.chatGeneration) return;
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
             delta
           });
-        }
+        },
+        { includeHistory: !!options.continueChat }
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
+      if (chatGeneration !== this.chatGeneration) {
+        logger.info("Dropping answer from a previous chat");
+        return;
+      }
+
+      sessionManager.addUserInput("[Screenshot]", "chat");
       sessionManager.addModelResponse(llmResult.response, {
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,

@@ -7,3 +7,5 @@ dist/
 bin/
 .DS_Store
 *.log
+# Compiled macOS snip helper (npm run build:snip)
+native/build/

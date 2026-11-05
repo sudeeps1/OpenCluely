@@ -1406,6 +1406,62 @@ class WindowManager {
     llmWindow.webContents.send('scroll-llm-response', { direction });
   }
 
+  /**
+   * Show a brief message without taking focus or mouse events. Like the other
+   * overlays it is hidden from screen capture. It is kept out of this.windows
+   * so the show/hide toggle and screen tracking leave it alone.
+   */
+  async showToast(message, duration = 1500) {
+    if (this.isScreenBeingShared) return;
+
+    if (!this.toastWindow || this.toastWindow.isDestroyed()) {
+      const toast = new BrowserWindow({
+        width: 260,
+        height: 56,
+        show: false,
+        frame: false,
+        transparent: true,
+        hasShadow: false,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        focusable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true }
+      });
+      toast.setContentProtection(true);
+      toast.setIgnoreMouseEvents(true);
+      toast.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      toast.setAlwaysOnTop(true, 'screen-saver', 3);
+      this.toastWindow = toast;
+      this.toastReady = toast.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html><body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:transparent;overflow:hidden">
+        <div id="message" style="padding:10px 20px;border-radius:10px;background:rgba(20,20,20,0.88);color:#fff;font:600 15px -apple-system,'Segoe UI',sans-serif;white-space:nowrap"></div>
+      </body></html>`));
+    }
+
+    const toast = this.toastWindow;
+    await this.toastReady;
+    if (toast.isDestroyed()) return;
+    await toast.webContents.executeJavaScript(`document.getElementById('message').textContent = ${JSON.stringify(message)}`);
+
+    const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const { width, height } = toast.getBounds();
+    toast.setPosition(
+      Math.round(workArea.x + (workArea.width - width) / 2),
+      Math.round(workArea.y + workArea.height * 0.8 - height / 2)
+    );
+    toast.showInactive();
+    this.ensureHiddenFromDock();
+
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      if (!toast.isDestroyed()) toast.hide();
+    }, duration);
+  }
+
   showLLMLoading() {
     if (this.isScreenBeingShared) {
       logger.warn('LLM loading blocked due to screen sharing mode');

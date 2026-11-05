@@ -108,7 +108,34 @@ class CaptureService {
     }
   }
 
-  _captureRegionMac() {
+  /**
+   * Area snip on macOS: our own helper (native/snip) when it has been built,
+   * otherwise the system screenshot tool.
+   */
+  async _captureRegionMac() {
+    const helper = path.join(__dirname, '..', '..', 'native', 'build', 'snip')
+      .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+    if (!fs.existsSync(helper)) {
+      return this._captureRegionSystemTool();
+    }
+
+    const file = path.join(os.tmpdir(), `opencluely-area-${process.pid}-${Date.now()}.png`);
+    const code = await new Promise((resolve) => {
+      execFile(helper, [file], (error) => resolve(error ? (typeof error.code === 'number' ? error.code : 2) : 0));
+    });
+    if (code === 1) return null; // cancelled
+    if (code === 0) {
+      try {
+        const buffer = fs.readFileSync(file);
+        fs.unlink(file, () => {});
+        if (buffer.length) return buffer;
+      } catch (_) { /* fall through */ }
+    }
+    logger.warn('Snip helper failed; using the system screenshot tool', { code });
+    return this._captureRegionSystemTool();
+  }
+
+  _captureRegionSystemTool() {
     const file = path.join(os.tmpdir(), `opencluely-area-${process.pid}-${Date.now()}.png`);
     return new Promise((resolve) => {
       // -i: drag to select (Space switches to window mode, Esc cancels); -x: no sound

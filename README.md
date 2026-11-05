@@ -154,12 +154,14 @@ For Azure Speech, create a Speech resource in the [Azure Portal](https://portal.
 | Action | Shortcut | Description |
 |---|---|---|
 | Screenshot capture | `Cmd/Ctrl + Shift + S` | Capture the screen and analyze it with Gemini |
-| Area screenshot | `Cmd/Ctrl + Shift + X` | Drag to select part of the screen and analyze just that |
+| Area screenshot, new chat | `Cmd/Ctrl + Shift + X` | Drag to select part of the screen; clears the chat and starts a new one |
+| Area screenshot, same chat | `Ctrl + Alt + X` | Drag to select part of the screen and add it to the current chat |
 | Toggle speech | `Alt + R` | Start or stop voice recognition, if configured |
 | Toggle visibility | `Cmd/Ctrl + Shift + V` | Show or hide all windows |
 | Toggle interaction | `Cmd/Ctrl + Shift + I` or `Alt + A` | Enable or disable click through |
 | Open chat | `Cmd/Ctrl + Shift + C` | Open the interactive chat window |
 | Scroll answer | `Ctrl + Alt + Up / Down` | Scroll the answer window without clicking it |
+| Switch language | `Ctrl + Alt + L` | Cycle the coding language and briefly show which one is active |
 | Settings | `Cmd/Ctrl + ,` | Open the settings panel |
 
 ## Project status

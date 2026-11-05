@@ -169,7 +169,7 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check your API key configuration.');
     }
@@ -190,15 +190,7 @@ class LLMService {
       const base64 = imageBuffer.toString('base64');
 
       const request = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage) },
-              { inlineData: { data: base64, mimeType } }
-            ]
-          }
-        ]
+        contents: this.buildImageContents(base64, mimeType, activeSkill, programmingLanguage, options)
       };
 
       this.applyGenerationDefaults(request);
@@ -273,7 +265,7 @@ class LLMService {
     }
   }
 
-  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check your API key configuration.');
     }
@@ -291,15 +283,7 @@ class LLMService {
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage) },
-              { inlineData: { data: base64, mimeType } }
-            ]
-          }
-        ]
+        contents: this.buildImageContents(base64, mimeType, activeSkill, programmingLanguage, options)
       };
       this.applyGenerationDefaults(geminiRequest);
       if (skillPrompt && skillPrompt.trim().length > 0) {
@@ -341,8 +325,36 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory, programmingLanguage);
+      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory, programmingLanguage, options);
     }
+  }
+
+  /**
+   * Build the contents for an image request. With options.includeHistory the
+   * image continues the current chat: earlier messages (text only, previous
+   * screenshots are not re-sent) come first.
+   */
+  buildImageContents(base64, mimeType, activeSkill, programmingLanguage, options = {}) {
+    const history = options.includeHistory
+      ? require('../managers/session.manager').getConversationHistory(15)
+        .filter(event => event.role !== 'system' && typeof event.content === 'string' && event.content.trim())
+        .map(event => ({
+          role: event.role === 'model' ? 'model' : 'user',
+          parts: [{ text: event.content.trim() }]
+        }))
+      : [];
+
+    const instruction = this.formatImageInstruction(activeSkill, programmingLanguage);
+    return [
+      ...history,
+      {
+        role: 'user',
+        parts: [
+          { text: history.length ? `This continues the conversation above; use it as context. ${instruction}` : instruction },
+          { inlineData: { data: base64, mimeType } }
+        ]
+      }
+    ];
   }
 
   formatImageInstruction(activeSkill, programmingLanguage) {
@@ -581,7 +593,7 @@ class LLMService {
     try {
       if (!text || !programmingLanguage) return text;
       const norm = String(programmingLanguage).toLowerCase();
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
+      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript', sql: 'sql' };
       const fenceTag = fenceTagMap[norm] || norm || 'text';
 
       // Replace all triple-backtick fences' language token with the selected tag
@@ -836,8 +848,8 @@ Always respond to the point, do not repeat the question or unnecessary informati
     // Add programming language context if provided
     if (programmingLanguage) {
       const lang = String(programmingLanguage).toLowerCase();
-      const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
+      const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript', sql: 'SQL' };
+      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript', sql: 'sql' };
       const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
       const fenceTag = fenceTagMap[lang] || lang || 'text';
       prompt += `\n\nCODING CONTEXT: Respond ONLY in ${languageTitle}. All code blocks must use triple backticks with language tag \`\`\`${fenceTag}\`\`\`. Do not include other languages unless explicitly asked.`;

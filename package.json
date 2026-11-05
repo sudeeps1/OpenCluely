@@ -8,7 +8,8 @@
     "dev": "node scripts/start.js --no-sandbox --disable-gpu",
     "test-speech": "node scripts/test-speech.js",
     "build": "electron-builder",
-    "build:mac": "electron-builder --mac",
+    "build:snip": "mkdir -p native/build && swiftc -O -swift-version 5 -target arm64-apple-macos14 native/snip/main.swift -o native/build/snip",
+    "build:mac": "npm run build:snip && electron-builder --mac",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux",
     "build:all": "electron-builder --mac --win --linux",
@@ -68,7 +69,8 @@
     "asarUnpack": [
       "assests/icons/**/*",
       "prompts/**/*",
-      "scripts/whisper_worker.py"
+      "scripts/whisper_worker.py",
+      "native/build/**/*"
     ],
     "mac": {
       "category": "public.app-category.utilities",
